@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>KİMSİN+F</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+        body {
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0f1e;
+            color: #eee;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 16px;
+        }
+        .card {
+            background: #1e2a3a;
+            border-radius: 48px;
+            padding: 2rem 1.5rem;
+            width: 100%;
+            max-width: 500px;
+            box-shadow: 0 20px 35px rgba(0,0,0,0.5);
+            text-align: center;
+        }
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            letter-spacing: 3px;
+            background: linear-gradient(135deg, #a5f3fc, #3b82f6);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            margin-bottom: 0.5rem;
+        }
+        .sub {
+            font-size: 0.8rem;
+            color: #94a3b8;
+            margin-bottom: 2rem;
+        }
+        input {
+            width: 100%;
+            padding: 14px 20px;
+            font-size: 1.2rem;
+            text-align: center;
+            background: #2d3e4e;
+            border: none;
+            border-radius: 60px;
+            color: white;
+            font-family: monospace;
+            letter-spacing: 2px;
+            outline: none;
+        }
+        input:focus {
+            background: #3b4f62;
+            box-shadow: 0 0 0 2px #3b82f6;
+        }
+        button {
+            background: #3b82f6;
+            border: none;
+            padding: 14px 24px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            border-radius: 60px;
+            color: white;
+            cursor: pointer;
+            transition: 0.2s;
+            width: 100%;
+            margin-top: 10px;
+        }
+        button:active {
+            transform: scale(0.97);
+        }
+        .btn-danger {
+            background: #dc2626;
+        }
+        .own-code-box {
+            background: #0f172a;
+            padding: 12px;
+            border-radius: 60px;
+            margin: 20px 0;
+            font-family: monospace;
+            font-size: 1.6rem;
+            letter-spacing: 6px;
+            font-weight: bold;
+            color: #a5f3fc;
+        }
+        .status {
+            background: #0f172a80;
+            backdrop-filter: blur(4px);
+            border-radius: 40px;
+            padding: 10px;
+            font-size: 0.85rem;
+            margin: 15px 0;
+        }
+        .footer {
+            margin-top: 32px;
+            font-size: 0.7rem;
+            color: #475569;
+            border-top: 1px solid #334155;
+            padding-top: 16px;
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+<div class="card" id="appRoot">
+    <!-- Giriş ekranı -->
+    <div id="loginPanel">
+        <h1>KİMSİN+F</h1>
+        <div class="sub">rastgele · direkt · anonim</div>
+        <input type="text" id="loginCodeInput" maxlength="8" placeholder="8 haneli kodun" autocomplete="off" inputmode="numeric">
+        <button id="doLoginBtn">GİRİŞ YAP</button>
+        <div class="footer">lkant+f teknoloji<br>tüm hakları saklıdır 2026</div>
+    </div>
+
+    <!-- Görüşme ekranı -->
+    <div id="callPanel" class="hidden">
+        <h1>KİMSİN+F</h1>
+        <div>senin kodun</div>
+        <div class="own-code-box" id="myCodeDisplay">------</div>
+        <div class="status" id="callStatusText">🟢 çevrimiçi</div>
+        <button id="callUserBtn">🎲 RASTGELE ARA</button>
+        <button id="endCallBtn" class="btn-danger">⛔ BİTİR</button>
+        <div class="footer">lkant+f teknoloji<br>tüm hakları saklıdır 2026</div>
+    </div>
+</div>
+
+<script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+<script>
+    // ---------- DEĞİŞKENLER ----------
+    let socket = null;
+    let myCode = "";
+    let currentCallTarget = null;
+    let peerConnection = null;
+    let localStream = null;
+    let remoteAudio = null;
+
+    const rtcConfig = {
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+    };
+
+    // DOM elemanları
+    const loginPanel = document.getElementById("loginPanel");
+    const callPanel = document.getElementById("callPanel");
+    const loginCodeInput = document.getElementById("loginCodeInput");
+    const doLoginBtn = document.getElementById("doLoginBtn");
+    const myCodeDisplay = document.getElementById("myCodeDisplay");
+    const callStatusText = document.getElementById("callStatusText");
+    const callUserBtn = document.getElementById("callUserBtn");
+    const endCallBtn = document.getElementById("endCallBtn");
+
+    // ---------- MİKROFON ----------
+    async function getLocalStream() {
+        if (localStream) return localStream;
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            localStream = stream;
+            return stream;
+        } catch (err) {
+            callStatusText.innerText = "❌ Mikrofon izni gerekli";
+            alert("Sesli görüşme için mikrofon izni vermelisiniz.");
+            return null;
+        }
+    }
+
+    // ---------- WEBRTC ----------
+    function closePeerConnection() {
+        if (peerConnection) {
+            peerConnection.close();
+            peerConnection = null;
+        }
+        if (remoteAudio) {
+            remoteAudio.srcObject = null;
+            remoteAudio = null;
+        }
+    }
+
+    function endCall() {
+        if (currentCallTarget && socket) {
+            socket.emit("end_call", { from: myCode, target: currentCallTarget });
+        }
+        closePeerConnection();
+        currentCallTarget = null;
+        callStatusText.innerText = "🔴 Görüşme sonlandı";
+        setTimeout(() => {
+            if (!currentCallTarget) callStatusText.innerText = "🟢 çevrimiçi";
+        }, 2000);
+    }
+
+    async function createPeerConnection(isCaller, remoteCode) {
+        const pc = new RTCPeerConnection(rtcConfig);
+        const stream = await getLocalStream();
+        if (stream) {
+            stream.getTracks().forEach(track => pc.addTrack(track, stream));
+        }
+        pc.ontrack = (event) => {
+            if (!remoteAudio) {
+                remoteAudio = new Audio();
+                remoteAudio.autoplay = true;
+                remoteAudio.volume = 1.0;
+                document.body.appendChild(remoteAudio);
+            }
+            remoteAudio.srcObject = event.streams[0];
+            callStatusText.innerText = `🎙️ ${remoteCode} ile görüşme aktif`;
+        };
+        pc.onicecandidate = (event) => {
+            if (event.candidate && socket && currentCallTarget) {
+                socket.emit("ice_candidate", {
+                    from: myCode,
+                    target: currentCallTarget,
+                    candidate: event.candidate
+                });
+            }
+        };
+        pc.oniceconnectionstatechange = () => {
+            if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") {
+                endCall();
+                callStatusText.innerText = "⚠️ Bağlantı kesildi";
+            }
+        };
+        return pc;
+    }
+
+    async function callSpecificTarget(targetCode) {
+        if (currentCallTarget) endCall();
+        if (targetCode === myCode) {
+            callStatusText.innerText = "❌ Kendi kendine çağrı olamaz";
+            return;
+        }
+        currentCallTarget = targetCode;
+        callStatusText.innerText = `📞 ${targetCode} aranıyor...`;
+        const streamOk = await getLocalStream();
+        if (!streamOk) { endCall(); return; }
+        peerConnection = await createPeerConnection(true, targetCode);
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        socket.emit("webrtc_offer", { from: myCode, target: targetCode, offer: offer });
+    }
+
+    // Otomatik cevap (confirm yok)
+    async function autoAnswerCall(fromCode) {
+        if (currentCallTarget) {
+            socket.emit("call_error", { from: myCode, target: fromCode, message: "meşgul" });
+            return;
+        }
+        currentCallTarget = fromCode;
+        callStatusText.innerText = `🔔 ${fromCode} ile bağlanılıyor...`;
+        const streamOk = await getLocalStream();
+        if (!streamOk) { endCall(); return; }
+        peerConnection = await createPeerConnection(false, fromCode);
+        // offer gelince answer gönderilecek
+    }
+
+    // ---------- SOCKET ----------
+    function initSocket() {
+        if (socket) socket.disconnect();
+        socket = io();
+
+        socket.on("register_error", (data) => { alert(data.message); window.location.reload(); });
+        socket.on("registered", () => console.log("Kayıt onayı"));
+
+        socket.on("random_call_target", (data) => {
+            if (data.error) { callStatusText.innerText = "⚠️ " + data.error; alert(data.error); return; }
+            callSpecificTarget(data.target);
+        });
+
+        socket.on("incoming_call", (data) => { autoAnswerCall(data.from); });
+
+        socket.on("webrtc_offer", async (data) => {
+            if (!currentCallTarget || currentCallTarget !== data.from) return;
+            if (!peerConnection) {
+                const streamOk = await getLocalStream();
+                if (!streamOk) return;
+                peerConnection = await createPeerConnection(false, data.from);
+            }
+            const offer = new RTCSessionDescription(data.offer);
+            await peerConnection.setRemoteDescription(offer);
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            socket.emit("webrtc_answer", { from: myCode, target: data.from, answer: answer });
+        });
+
+        socket.on("webrtc_answer", async (data) => {
+            if (!peerConnection || !currentCallTarget || currentCallTarget !== data.from) return;
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+        });
+
+        socket.on("ice_candidate", async (data) => {
+            if (!peerConnection || !currentCallTarget || currentCallTarget !== data.from) return;
+            try { await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch(e) { console.warn(e); }
+        });
+
+        socket.on("call_ended", () => { endCall(); callStatusText.innerText = "📴 Karşı taraf bitirdi"; setTimeout(() => { if (!currentCallTarget) callStatusText.innerText = "🟢 çevrimiçi"; }, 2000); });
+        socket.on("call_error", (data) => { alert(data.message); if (currentCallTarget) endCall(); });
+    }
+
+    // ---------- GİRİŞ (OTOMATİK HATIRLAMA) ----------
+    async function loginUser(code) {
+        try {
+            const res = await fetch("/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ code })
+            });
+            const data = await res.json();
+            if (data.error) { alert(data.error); return false; }
+            myCode = data.code;
+            myCodeDisplay.innerText = myCode;
+            localStorage.setItem("kimsinf_code", myCode);
+            initSocket();
+            socket.emit("register", { code: myCode });
+            return true;
+        } catch (err) { alert("Sunucu bağlantı hatası"); return false; }
+    }
+
+    // Sayfa yüklenince kayıtlı kodu dene
+    window.onload = async () => {
+        const savedCode = localStorage.getItem("kimsinf_code");
+        if (savedCode && savedCode.length === 8) {
+            loginCodeInput.value = savedCode;
+            const success = await loginUser(savedCode);
+            if (success) {
+                loginPanel.classList.add("hidden");
+                callPanel.classList.remove("hidden");
+                callStatusText.innerText = "🟢 çevrimiçi - rastgele ara";
+                endCall();
+            }
+        }
+    };
+
+    // Manuel giriş butonu
+    doLoginBtn.onclick = async () => {
+        let code = loginCodeInput.value.trim();
+        if (!/^\d{8}$/.test(code)) { alert("8 haneli sayı girin"); return; }
+        const success = await loginUser(code);
+        if (success) {
+            loginPanel.classList.add("hidden");
+            callPanel.classList.remove("hidden");
+            callStatusText.innerText = "🟢 çevrimiçi - rastgele ara";
+            endCall();
+        }
+    };
+
+    callUserBtn.onclick = () => {
+        if (socket && myCode) socket.emit("call_random", { from: myCode });
+        else alert("Önce giriş yapın");
+    };
+    endCallBtn.onclick = endCall;
+
+    window.addEventListener("beforeunload", () => {
+        if (localStream) localStream.getTracks().forEach(t => t.stop());
+        if (peerConnection) peerConnection.close();
+        if (socket) socket.disconnect();
+    });
+</script>
+</body>
+</html>
